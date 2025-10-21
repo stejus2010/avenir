@@ -115,7 +115,13 @@ function updateUsageUI() {
 async function checkScanLimit(type = 'scan') {
   const user = auth.currentUser;
   if (!user) {
-    Swal.fire('Please log in to use scanning.');
+    Swal.fire({
+      icon: 'info',
+      title: 'Login Required 🔐',
+      text: 'Please log in to use Clarivana’s scanning features.',
+      confirmButtonText: 'Got it',
+      customClass: { popup: 'swal-account' }
+    });
     return false;
   }
 
@@ -146,7 +152,8 @@ async function checkScanLimit(type = 'scan') {
       Swal.fire({
         icon: 'info',
         title: 'Daily Scan Limit Reached',
-        text: 'Upgrade to Premium for unlimited scans 🚀'
+        text: 'Upgrade to Premium for unlimited scans 🚀',
+        customClass: { popup: 'swal-info' }
       });
       document.querySelector('.premium-section')?.scrollIntoView({ behavior: 'smooth' });
       return false;
@@ -155,7 +162,8 @@ async function checkScanLimit(type = 'scan') {
       Swal.fire({
         icon: 'info',
         title: 'Daily AI Analysis Limit Reached',
-        text: 'Upgrade to Premium for unlimited analyses 🚀'
+        text: 'Upgrade to Premium for unlimited analyses 🚀',
+        customClass: { popup: 'swal-info' }
       });
       document.querySelector('.premium-section')?.scrollIntoView({ behavior: 'smooth' });
       return false;
@@ -226,14 +234,20 @@ async function extractTextFromImage(canvasEl) {
       extractedTextElement.value = text;
       checkAllergiesThenHarmful(text);
 
-      // Show AI button
       const aiBtn = document.getElementById('ai-button');
+      const scanAnotherBtn = document.getElementById('scan-another');
       if (aiBtn) aiBtn.style.display = 'inline-block';
+      if (scanAnotherBtn) scanAnotherBtn.style.display = 'inline-block';
     })
     .catch(err => {
       console.error('ocr err', err);
       extractedTextElement.value = '';
-      Swal.fire('OCR failed', 'Try again', 'error');
+      Swal.fire({
+        icon: 'error',
+        title: 'OCR Failed 😢',
+        text: 'Please try again.',
+        customClass: { popup: 'swal-error' }
+      });
     });
 }
 
@@ -252,12 +266,11 @@ function checkAllergiesThenHarmful(extractedText) {
     if (allergyAlerts.length > 0) {
       Swal.fire({
         icon: 'warning',
-        title: 'Allergy Alert!',
-        text: `Contains: ${allergyAlerts.join(', ')}`
+        title: '⚠️ Allergy Alert!',
+        text: `Contains: ${allergyAlerts.join(', ')}`,
+        customClass: { popup: 'swal-error' }
       }).then(() => detectHarmfulIngredients(extractedText, allergyAlerts));
-    } else {
-      detectHarmfulIngredients(extractedText, allergyAlerts);
-    }
+    } else detectHarmfulIngredients(extractedText, allergyAlerts);
   });
 }
 
@@ -284,18 +297,29 @@ function detectHarmfulIngredients(extractedText, allergyAlerts = []) {
   if (foundArr.length > 0) {
     Swal.fire({
       icon: 'error',
-      title: 'Harmful ingredients detected!',
+      title: 'Harmful Ingredients Detected ☠️',
       text: 'Tap Show Risks for details.',
       showCancelButton: true,
-      confirmButtonText: 'Show Risks'
+      confirmButtonText: 'Show Risks',
+      customClass: { popup: 'swal-error' }
     }).then(async res => {
       if (res.isConfirmed)
-        Swal.fire({ icon: 'warning', title: 'Potential risks', text: foundArr.join('\n') });
+        Swal.fire({
+          icon: 'warning',
+          title: 'Potential Risks',
+          html: `<pre>${foundArr.join('\n')}</pre>`,
+          customClass: { popup: 'swal-info' }
+        });
       await saveScanResult(extractedText, allergyAlerts, foundArr);
       if (window.appLoadHistory) window.appLoadHistory();
     });
   } else {
-    Swal.fire({ icon: 'success', title: 'No harmful ingredients detected.' });
+    Swal.fire({
+      icon: 'success',
+      title: 'All Clear! ✅',
+      text: 'No harmful ingredients detected.',
+      customClass: { popup: 'swal-success' }
+    });
     saveScanResult(extractedText, allergyAlerts, foundArr);
     if (window.appLoadHistory) window.appLoadHistory();
   }
@@ -339,65 +363,43 @@ function saveChanges() {
   document.getElementById('save-button').style.display = 'none';
   checkAllergiesThenHarmful(edited);
 }
+
 // 🧹 Reset Scan Session
 function resetScanSession() {
-  // Clear captured image, text, AI box
   document.getElementById('captured-image').innerHTML = '';
   document.getElementById('extracted-text').value = '';
   document.getElementById('ai-result').style.display = 'none';
 
-  // Hide buttons back to default
   document.getElementById('scan-another').style.display = 'none';
   document.getElementById('ai-button').style.display = 'none';
   document.getElementById('edit-button').style.display = 'inline';
   document.getElementById('save-button').style.display = 'none';
 
-  // Restart the camera
   startCamera();
 
   Swal.fire({
     icon: 'info',
-    title: 'Ready for a new scan!',
-    timer: 1200,
-    showConfirmButton: false
+    title: '✨ Ready for a New Scan!',
+    text: 'Your scanner is reset and live again.',
+    timer: 1600,
+    showConfirmButton: false,
+    customClass: { popup: 'swal-scan' }
   });
 }
 
-// Modify extractTextFromImage() to show “Scan Another” button at end:
-async function extractTextFromImage(canvasEl) {
-  extractedTextElement.value = 'Recognizing...';
-  const allowed = await checkScanLimit('ai');
-  if (!allowed) return;
-
-  Tesseract.recognize(canvasEl, 'eng', { logger: m => console.log(m) })
-    .then(({ data }) => {
-      const text = data.text || '';
-      extractedTextElement.value = text;
-      checkAllergiesThenHarmful(text);
-
-      // Show AI and Scan Another buttons
-      const aiBtn = document.getElementById('ai-button');
-      const scanAnotherBtn = document.getElementById('scan-another');
-      if (aiBtn) aiBtn.style.display = 'inline-block';
-      if (scanAnotherBtn) scanAnotherBtn.style.display = 'inline-block';
-    })
-    .catch(err => {
-      console.error('ocr err', err);
-      extractedTextElement.value = '';
-      Swal.fire('OCR failed', 'Try again', 'error');
-    });
-}
-// 🧠 AI Analysis Integration (Gemini)
-// const GEMINI_API_KEY = "AIzaSyAC6RyMxHDQYqntTJcraeuXAsGY6MJYbjs"; // Replace with your key
-// const MODEL = "gemini-2.5-flash-latest";
-
+// 🧠 AI Analysis Integration
 async function runAIAnalysis() {
   const allowed = await checkScanLimit('ai');
   if (!allowed) return;
 
   const text = extractedTextElement.value.trim();
   if (!text) {
-    Swal.fire('No ingredients found!', 'Please scan first.', 'info');
+    Swal.fire({
+      icon: 'info',
+      title: 'No Ingredients Found!',
+      text: 'Please scan first.',
+      customClass: { popup: 'swal-info' }
+    });
     return;
   }
 
@@ -424,11 +426,17 @@ async function runAIAnalysis() {
     Swal.fire({
       icon: 'info',
       title: 'AI Ingredient Analysis 🧠',
-      html: `<div style="text-align:left;white-space:pre-wrap">${aiText}</div>`
+      html: `<div style="text-align:left;white-space:pre-wrap">${aiText}</div>`,
+      customClass: { popup: 'swal-account' }
     });
   } catch (err) {
     console.error('AI Error', err);
-    Swal.fire('AI analysis failed', 'Try again later', 'error');
+    Swal.fire({
+      icon: 'error',
+      title: 'AI Analysis Failed 😔',
+      text: 'Try again later.',
+      customClass: { popup: 'swal-error' }
+    });
   } finally {
     aiBtn.textContent = "AI Analysis";
     aiBtn.disabled = false;
@@ -439,7 +447,6 @@ async function runAIAnalysis() {
 document.addEventListener('DOMContentLoaded', () => {
   const navScanner = document.getElementById('nav-scanner');
   const goScanner = document.getElementById('go-scanner');
-  const upgradeBtn = document.getElementById('upgrade-btn');
   const aiBtn = document.getElementById('ai-button');
   const scanAnotherBtn = document.getElementById('scan-another');
 
@@ -456,5 +463,3 @@ document.addEventListener('DOMContentLoaded', () => {
 
   updateUsageUI();
 });
-
-
