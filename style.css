@@ -262,13 +262,7 @@ body::before {
   100% { transform: translate(-25%, -25%) scale(1.2); }
 }
 /* SweetAlert Themes */
-.swal-scan {
-  background: rgba(15, 15, 25, 0.9);
-  color: #cde8ff;
-  backdrop-filter: blur(10px);
-  box-shadow: 0 0 20px #00c6ff55;
-  border: 1px solid #00c6ff33;
-}
+
 .swal-success {
   background: radial-gradient(circle at top, #0b1e17, #05100c);
   color: #aaffc3;
@@ -289,3 +283,112 @@ body::before {
   color: #b0d0ff;
   box-shadow: 0 0 25px #3f6cff66;
 }
+/* 🌌 Swals refined with glowing theme */
+.swal-scan {
+  border: 1px solid rgba(78, 188, 255, 0.4);
+  box-shadow: 0 0 30px rgba(72, 209, 255, 0.3);
+  backdrop-filter: blur(12px);
+}
+
+.swal-premium {
+  border: 1px solid rgba(0, 255, 230, 0.3);
+  box-shadow: 0 0 35px rgba(0, 255, 200, 0.2);
+  backdrop-filter: blur(10px);
+}
+
+.swal-safe {
+  border: 1px solid rgba(0, 255, 120, 0.3);
+  box-shadow: 0 0 25px rgba(0, 255, 120, 0.2);
+  backdrop-filter: blur(8px);
+}
+.cat-block {
+  margin: 10px 0;
+  padding: 10px;
+  background: rgba(20, 25, 35, 0.6);
+  border-radius: 8px;
+  border-left: 3px solid #00eaff99;
+}
+.ing-item {
+  margin: 6px 0;
+  font-size: 0.9em;
+}
+/* ✨ Smooth fade transitions for Clarivana UI */
+.fade-out {
+  opacity: 0;
+  transform: scale(0.98);
+  filter: blur(3px);
+  transition: all 0.4s ease-in;
+}
+
+.fade-in {
+  opacity: 1;
+  transform: scale(1);
+  filter: blur(0);
+  transition: all 0.6s ease-out;
+}
+/* Loader */
+.progress-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(6px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  animation: fadeIn 0.3s ease-in;
+}
+
+.progress-ring { text-align: center; color: #fff; }
+.spinner {
+  width: 80px; height: 80px;
+  border: 5px solid rgba(255,255,255,0.2);
+  border-top: 5px solid #00ffcc;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 10px;
+}
+@keyframes spin { 100% { transform: rotate(360deg); } }
+@keyframes fadeIn { from{opacity:0} to{opacity:1} }
+
+/* Scan results */
+.scan-result {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  width: 90%;
+  max-width: 420px;
+  animation: fadeIn 0.5s ease-out;
+}
+
+.result-card {
+  border-radius: 16px;
+  padding: 20px;
+  text-align: center;
+  font-family: 'Poppins', sans-serif;
+  box-shadow: 0 0 15px rgba(0,0,0,0.3);
+}
+
+.result-card.safe {
+  background: linear-gradient(135deg, #0f5132, #198754);
+  color: #d1fae5;
+}
+
+.result-card.unsafe {
+  background: linear-gradient(135deg, #7f1d1d, #dc2626);
+  color: #fee2e2;
+}
+
+.rescan-btn {
+  margin-top: 15px;
+  background: rgba(255,255,255,0.2);
+  color: #fff;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+.rescan-btn:hover { background: rgba(255,255,255,0.4); }

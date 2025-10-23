@@ -6,7 +6,7 @@ let scanCount = 0;
 let analysisCount = 0;
 
 // Load ingredients JSON
-fetch('ingredients.json')
+fetch('ingredients_pro_mode.json')
   .then(r => r.json())
   .then(data => harmfulIngredientsData = data.harmfulIngredients || {})
   .catch(err => console.error('ingredients.json load err', err));
@@ -274,56 +274,247 @@ function checkAllergiesThenHarmful(extractedText) {
   });
 }
 
-function detectHarmfulIngredients(extractedText, allergyAlerts = []) {
-  const cleaned = extractedText.toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
-  const words = cleaned.split(' ').filter(Boolean);
-  const ignore = new Set(['and', 'or', 'with', 'the', 'a', 'to', 'of']);
-  const filtered = words.filter(w => !ignore.has(w));
-
-  const synonyms = { 'e300': 'ascorbic acid', 'vitamin c': 'ascorbic acid', 'e330': 'citric acid' };
-  const found = new Set();
-
-  for (let i = 0; i < filtered.length; i++) {
-    const w = filtered[i];
-    const bigram = i < filtered.length - 1 ? (w + ' ' + filtered[i + 1]) : null;
-    const wMapped = synonyms[w] || w;
-    const bMapped = bigram ? (synonyms[bigram] || bigram) : null;
-
-    if (harmfulIngredientsData[wMapped]) harmfulIngredientsData[wMapped].diseases.forEach(d => found.add(d));
-    if (bMapped && harmfulIngredientsData[bMapped]) harmfulIngredientsData[bMapped].diseases.forEach(d => found.add(d));
+// ⚡ Clarivana — Precise JSON-aware ingredient detection
+async function detectHarmfulIngredients(extractedText, allergyAlerts = []) {
+  if (!extractedText || !extractedText.trim()) {
+    // no text → nothing to do
+    return saveScanResult(extractedText, allergyAlerts, []); 
   }
 
-  const foundArr = Array.from(found);
-  if (foundArr.length > 0) {
-    Swal.fire({
-      icon: 'error',
-      title: 'Harmful Ingredients Detected ☠️',
-      text: 'Tap Show Risks for details.',
+  // Normalize the OCR text
+  const normalize = s => s
+    .toLowerCase()
+    .replace(/\u2019/g, "'")
+    .replace(/[\u2010-\u2015]/g, '-') // different hyphens
+    .replace(/[^a-z0-9\s\-\_]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const text = normalize(extractedText);
+
+  // Accept either: harmfulIngredientsData is the array, or an object with harmfulIngredients
+  const harmfulList = Array.isArray(harmfulIngredientsData)
+    ? harmfulIngredientsData
+    : (harmfulIngredientsData && harmfulIngredientsData.harmfulIngredients) || [];
+
+  // Helper: escape regex for literal phrase matching
+  function escapeRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // Conservative Levenshtein (used only rarely)
+  function levenshtein(a, b) {
+    const m = a.length, n = b.length;
+    if (!m) return n;
+    if (!n) return m;
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        dp[i][j] = Math.min(dp[i-1][j] + 1, dp[i][j-1] + 1, dp[i-1][j-1] + cost);
+      }
+    }
+    return dp[m][n];
+  }
+
+  // Conservative fuzzy: only allow very small ratio for long words
+  function conservativeFuzzyMatch(a, b) {
+    const A = a.replace(/\s+/g,'').toLowerCase();
+    const B = b.replace(/\s+/g,'').toLowerCase();
+    const maxLen = Math.max(A.length, B.length);
+    if (maxLen < 6) return false;           // don't fuzzy-match short tokens
+    const dist = levenshtein(A, B);
+    const ratio = dist / maxLen;
+    return ratio <= 0.15;                   // strict threshold
+  }
+
+  // Build tokens set from scanned text for quick lookup
+  const tokens = new Set(text.split(/\s+/).filter(Boolean));
+
+  // helper: test if phrase appears as whole words (supports 'yellow 5', 'e330', 'ascorbic acid')
+  function hasWholePhrase(phrase) {
+    if (!phrase || !phrase.trim()) return false;
+    const p = normalize(phrase);
+    // If phrase includes digits (e.g., 'yellow 5' or 'e330'), accept either 'yellow 5', 'yellow-5', 'yellow5'
+    const hasDigit = /[0-9]/.test(p);
+    if (hasDigit) {
+      const variants = [
+        p,
+        p.replace(/\s+/g,''),
+        p.replace(/\s+/g,'-'),
+        p.replace(/[-_]+/g,' ')
+      ];
+      for (const v of variants) {
+        const rx = new RegExp(`\\b${escapeRegex(v)}\\b`, 'i');
+        if (rx.test(text)) return true;
+      }
+      return false;
+    }
+    // multi-word phrase: use word-boundary phrase search
+    const rx = new RegExp(`\\b${escapeRegex(p)}\\b`, 'i');
+    if (rx.test(text)) return true;
+    // As extra precaution: check if all words of the phrase appear together in same order (handles minor punctuation differences)
+    const parts = p.split(/\s+/).filter(Boolean);
+    if (parts.length > 1) {
+      let idx = -1;
+      let startPos = 0;
+      for (const part of parts) {
+        const rxPart = new RegExp(`\\b${escapeRegex(part)}\\b`, 'i');
+        const m = rxPart.exec(text.slice(startPos));
+        if (!m) { idx = -1; break; }
+        startPos += m.index + part.length;
+        idx++;
+      }
+      if (idx === parts.length - 1) return true;
+    }
+    // single-word fallback: check exact token match
+    if (parts.length === 1) {
+      return tokens.has(parts[0]);
+    }
+    return false;
+  }
+
+  // blacklist of generic words to avoid accidental matching (e.g. 'yellow' alone shouldn't trigger 'yellow_5')
+  const genericBlacklist = new Set([
+    'yellow','red','blue','white','black','green','natural','artificial','flavour','flavor','colour','color',
+    'corn','meal','malted','barley','flour','water','sugar','salt','oil','extract','natural'
+  ]);
+
+  const foundIngredients = []; // will store full objects
+  const foundIds = new Set();
+
+  // Precompute normalized candidate strings for each ingredient to speed up checks
+  for (const ingredient of harmfulList) {
+    if (!ingredient || !ingredient.name) continue;
+
+    const candidates = new Set();
+
+    // push canonical forms
+    candidates.add(ingredient.name);
+    candidates.add(ingredient.id);
+    (ingredient.aliases || []).forEach(a => candidates.add(a));
+
+    // also push lower & normalized forms
+    const candArr = Array.from(candidates).map(c => normalize(String(c)));
+
+    let matched = false;
+
+    // 1) Check exact/whole-phrase matches first (strict)
+    for (const c of candArr) {
+      if (!c) continue;
+      // skip very generic single words unless they are the only candidate and also include numeric or special char
+      if (c.split(/\s+/).length === 1 && genericBlacklist.has(c)) {
+        // but if alias/id contains digits (e.g., 'yellow 5' or 'e330') then we shouldn't skip
+        if (!/[0-9]/.test(c) && !ingredient.id.match(/[0-9]/)) {
+          continue;
+        }
+      }
+      if (hasWholePhrase(c)) {
+        matched = true;
+        break;
+      }
+    }
+
+    // 2) If not matched, consider conservative fuzzy only for long candidates
+    if (!matched) {
+      for (const c of candArr) {
+        if (!c) continue;
+        // avoid fuzzy for short tokens
+        if (c.replace(/\s+/g,'').length < 6) continue;
+        // quick containment check: if many letters overlap, run conservativeFuzzyMatch
+        if (conservativeFuzzyMatch(c, text)) {
+          // final safety: ensure the match isn't actually a small substring inside a bigger word found in the OCR
+          // (we already removed many punctuation chars; still, double-check tokens)
+          const maybe = c.split(/\s+/).map(p => tokens.has(p)).filter(Boolean);
+          // require at least one token to match exactly as token or phrase heuristic already matched; if none → skip
+          if (maybe.length > 0) {
+            matched = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (matched) {
+      if (!foundIds.has(ingredient.id)) {
+        foundIds.add(ingredient.id);
+        foundIngredients.push(ingredient);
+      }
+    }
+  }
+
+  // Build result UI & save
+  if (foundIngredients.length > 0) {
+    const html = foundIngredients.map(ing => {
+      const riskColor = ing.riskLevel === 'High' ? '#ff6b6b' : (ing.riskLevel === 'Moderate' ? '#ffd166' : '#8af78a');
+      const toxAc = (ing.toxicity && ing.toxicity.acute) ? ing.toxicity.acute : 'N/A';
+      const toxCh = (ing.toxicity && ing.toxicity.chronic) ? ing.toxicity.chronic : 'N/A';
+      const regs = ing.regulatoryStatus ? Object.entries(ing.regulatoryStatus).map(([k,v]) => `<b>${k}:</b> ${v}`).join('<br>') : '';
+      const effects = (ing.healthEffects || []).map(h => `<li>${h.effect}</li>`).join('');
+      const refs = (ing.references || []).map(r => `<li><a href="${r}" target="_blank" rel="noopener" style="color:#a9d6ff">${r}</a></li>`).join('');
+      return `
+        <div style="text-align:left;padding:12px;margin:8px 0;border-radius:10px;background:#0f1720;border:1px solid rgba(255,255,255,0.03)">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <strong style="color:#fff;font-size:1.05em">${ing.name}</strong>
+              <div style="color:#9db6c9;font-size:0.85em">${ing.category} • <span style="color:${riskColor}">${ing.riskLevel}</span></div>
+            </div>
+            <div style="text-align:right;color:#c9d8ff;font-size:0.8em">${ing.id}</div>
+          </div>
+          <p style="color:#cbd5e1;margin-top:10px">${ing.description || ''}</p>
+          <div style="display:flex;gap:12px;font-size:0.88em;color:#d2e7ff">
+            <div><b>Toxicity</b><br>Acute: ${toxAc}<br>Chronic: ${toxCh}</div>
+            <div><b>Regulatory</b><br>${regs}</div>
+          </div>
+          ${effects ? `<div style="margin-top:8px;"><b style="color:#e6f7ff">Health effects</b><ul style="color:#a7c7df;margin:6px 0 0 16px">${effects}</ul></div>` : ''}
+          ${refs ? `<div style="margin-top:8px;"><b style="color:#e6f7ff">References</b><ul style="color:#a7c7df;margin:6px 0 0 16px">${refs}</ul></div>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    // Save scan result with the found ids array
+    await saveScanResult(extractedText, allergyAlerts, Array.from(foundIds));
+
+    await Swal.fire({
+      icon: 'warning',
+      title: `⚠️ ${foundIngredients.length} harmful item${foundIngredients.length>1?'s':''} detected`,
+      html,
+      width: '720px',
+      background: '#071122',
+      color: '#e6f7ff',
       showCancelButton: true,
-      confirmButtonText: 'Show Risks',
-      customClass: { popup: 'swal-error' }
-    }).then(async res => {
-      if (res.isConfirmed)
-        Swal.fire({
-          icon: 'warning',
-          title: 'Potential Risks',
-          html: `<pre>${foundArr.join('\n')}</pre>`,
-          customClass: { popup: 'swal-info' }
-        });
-      await saveScanResult(extractedText, allergyAlerts, foundArr);
-      if (window.appLoadHistory) window.appLoadHistory();
+      confirmButtonText: 'Understood',
+      cancelButtonText: 'Scan Another',
+      confirmButtonColor: '#ff6b6b',
+      cancelButtonColor: '#2b2f36',
+      customClass: { popup: 'swal-harmful' },
+      didClose: () => { if (window.appLoadHistory) window.appLoadHistory(); }
+    }).then(result => {
+      if (result.dismiss === Swal.DismissReason.cancel) {
+        // reset scan session without full reload
+        try { resetScanSession(); } catch(e){ location.reload(); }
+      }
     });
+
   } else {
-    Swal.fire({
+    // No harmful ingredients found — save and show all-clear
+    await saveScanResult(extractedText, allergyAlerts, []);
+    await Swal.fire({
       icon: 'success',
-      title: 'All Clear! ✅',
-      text: 'No harmful ingredients detected.',
-      customClass: { popup: 'swal-success' }
+      title: '✨ All Clear',
+      text: 'No harmful ingredients detected in this scan.',
+      background: '#071122',
+      color: '#e6f7ff',
+      confirmButtonColor: '#2ecc71',
+      confirmButtonText: 'Nice'
     });
-    saveScanResult(extractedText, allergyAlerts, foundArr);
-    if (window.appLoadHistory) window.appLoadHistory();
   }
 }
+
+
+
 
 // 💾 Save Result
 async function saveScanResult(extractedText, allergyAlerts, foundArr) {
@@ -364,28 +555,56 @@ function saveChanges() {
   checkAllergiesThenHarmful(edited);
 }
 
-// 🧹 Reset Scan Session
+// 🧹 Reset Scan Session with fade animation
 function resetScanSession() {
-  document.getElementById('captured-image').innerHTML = '';
-  document.getElementById('extracted-text').value = '';
-  document.getElementById('ai-result').style.display = 'none';
+  const scanSection = document.getElementById('scanner-screen');
+  const videoContainer = document.getElementById('video-container');
+  const capturedImage = document.getElementById('captured-image');
+  const extractedText = document.getElementById('extracted-text');
+  const aiResult = document.getElementById('ai-result');
+  const scanAnother = document.getElementById('scan-another');
+  const aiBtn = document.getElementById('ai-button');
+  const editBtn = document.getElementById('edit-button');
+  const saveBtn = document.getElementById('save-button');
 
-  document.getElementById('scan-another').style.display = 'none';
-  document.getElementById('ai-button').style.display = 'none';
-  document.getElementById('edit-button').style.display = 'inline';
-  document.getElementById('save-button').style.display = 'none';
+  // 🎬 Fade out old content
+  scanSection.classList.add('fade-out');
 
-  startCamera();
+  setTimeout(() => {
+    // Clear old data
+    capturedImage.innerHTML = '';
+    extractedText.value = '';
+    if (aiResult) aiResult.style.display = 'none';
 
-  Swal.fire({
-    icon: 'info',
-    title: '✨ Ready for a New Scan!',
-    text: 'Your scanner is reset and live again.',
-    timer: 1600,
-    showConfirmButton: false,
-    customClass: { popup: 'swal-scan' }
-  });
+    scanAnother.style.display = 'none';
+    aiBtn.style.display = 'none';
+    editBtn.style.display = 'inline';
+    saveBtn.style.display = 'none';
+
+    // Restart camera after fade
+    startCamera();
+
+    // 🎬 Fade in new session
+    scanSection.classList.remove('fade-out');
+    scanSection.classList.add('fade-in');
+
+    Swal.fire({
+      icon: 'info',
+      title: '✨ New Scan Ready',
+      text: 'Your scanner has been refreshed.',
+      background: 'radial-gradient(circle at top left, #0d121a, #151e28)',
+      color: '#b5e9ff',
+      showConfirmButton: false,
+      timer: 1600,
+      customClass: { popup: 'swal-scan' }
+    });
+
+    setTimeout(() => {
+      scanSection.classList.remove('fade-in');
+    }, 800);
+  }, 500);
 }
+
 
 // 🧠 AI Analysis Integration
 async function runAIAnalysis() {
